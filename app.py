@@ -37,8 +37,8 @@ def conectar_google_sheets():
     else:
         client = gspread.service_account(filename="creds.json")
 
-    # --- COLOQUE SEU ID AQUI ---
-    id_da_planilha = "1RS5RrLAR_QjI8Ba55oXduBOlaobVNJnhfc6SKD9MpRI"
+    # Busca o ID nos segredos (seja local ou na nuvem)
+    id_da_planilha = st.secrets["spreadsheet_id"]
     return client.open_by_key(id_da_planilha)
 
 try:
