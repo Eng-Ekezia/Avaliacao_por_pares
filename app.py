@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-import gspread
 import json
 import plotly.express as px
 from datetime import datetime
+from servicos import carregar_dados, salvar_voto, salvar_relatorio_notas
 
 # --- CONFIGURAÇÃO VISUAL ---
 st.set_page_config(page_title="Avaliação Dinâmica", layout="wide")
@@ -26,66 +26,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- CONEXÃO ---
-@st.cache_resource
-def conectar_google_sheets():
-    # Tenta conectar usando segredos do Streamlit (Nuvem)
-    if "gcp_service_account" in st.secrets:
-        dados_credenciais = st.secrets["gcp_service_account"]
-        client = gspread.service_account_from_dict(dados_credenciais)
-    # Se não achar segredos, tenta procurar o arquivo local (Tablet/PC)
-    else:
-        client = gspread.service_account(filename="creds.json")
-
-    # Busca o ID nos segredos (seja local ou na nuvem)
-    id_da_planilha = st.secrets["spreadsheet_id"]
-    return client.open_by_key(id_da_planilha)
-
-try:
-    planilha = conectar_google_sheets()
-except Exception as e:
-    st.error(f"Erro de conexão: {e}")
-    st.stop()
-
-# --- CARREGAMENTO DE DADOS (COM CACHE) ---
-@st.cache_data(ttl=60)
-def carregar_dados():
-    config = pd.DataFrame(planilha.worksheet("CONFIG_GERAL").get_all_records())
-    alunos = pd.DataFrame(planilha.worksheet("ALUNOS").get_all_records())
-    grupos = pd.DataFrame(planilha.worksheet("GRUPOS").get_all_records())
-    criterios = pd.DataFrame(planilha.worksheet("CRITERIOS").get_all_records())
-    respostas = pd.DataFrame(planilha.worksheet("RESPOSTAS").get_all_records())
-    return config, alunos, grupos, criterios, respostas
-
-def salvar_voto(dados):
-    planilha.worksheet("RESPOSTAS").append_row(dados)
-    carregar_dados.clear()
-
-# --- NOVA FUNÇÃO INTELIGENTE: SALVAR NOTAS EM ABA ESPECÍFICA ---
-def salvar_relatorio_notas(df_final, nome_do_evento):
-    # Define o nome da aba baseado no evento atual (ex: "Notas_Seminario_1")
-    nome_aba_destino = f"Notas_{nome_do_evento}"
-    
-    try:
-        # Tenta abrir a aba. Se ela existir, limpamos o conteúdo para atualizar
-        ws_notas = planilha.worksheet(nome_aba_destino)
-        ws_notas.clear()
-        mensagem = f"Aba '{nome_aba_destino}' atualizada com sucesso!"
-    except:
-        # Se der erro (não existe), criamos uma aba nova
-        ws_notas = planilha.add_worksheet(title=nome_aba_destino, rows=100, cols=10)
-        mensagem = f"Aba '{nome_aba_destino}' criada e salva com sucesso!"
-    
-    # Prepara os dados para envio (Cabeçalho + Dados)
-    dados_para_enviar = [df_final.columns.values.tolist()] + df_final.values.tolist()
-    
-    # Escreve na planilha
-    ws_notas.update(range_name="A1", values=dados_para_enviar)
-    st.toast(mensagem, icon="💾")
-    return nome_aba_destino
-
 # --- APP ---
 try:
+    # Carregamento de dados via módulo de serviços
     df_config, df_alunos, df_grupos, df_criterios, df_respostas = carregar_dados()
 
     # === LÓGICA INTELIGENTE DE SELEÇÃO DE EVENTO ===
