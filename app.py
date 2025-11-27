@@ -4,7 +4,6 @@ import gspread
 import json
 import plotly.express as px
 from datetime import datetime
-from gspread.utils import rowcol_to_a1
 
 # --- CONFIGURAÇÃO VISUAL ---
 st.set_page_config(page_title="Avaliação Dinâmica", layout="wide")
@@ -37,9 +36,11 @@ def conectar_google_sheets():
     # Se não achar segredos, tenta procurar o arquivo local (Tablet/PC)
     else:
         client = gspread.service_account(filename="creds.json")
+
     # --- COLOQUE SEU ID AQUI ---
-    id_da_planilha = "1RS5RrLAR_QjI8Ba55oXduBOlaobVNJnhfc6SKD9MpRI"
+    id_da_planilha = "COLE_O_ID_DA_SUA_PLANILHA_AQUI"
     return client.open_by_key(id_da_planilha)
+
 try:
     planilha = conectar_google_sheets()
 except Exception as e:
@@ -60,30 +61,50 @@ def salvar_voto(dados):
     planilha.worksheet("RESPOSTAS").append_row(dados)
     carregar_dados.clear()
 
-# --- NOVA FUNÇÃO: SALVAR NOTAS FINAIS NA ABA 'NOTAS' ---
-def salvar_relatorio_notas(df_final):
-    ws_notas = planilha.worksheet("NOTAS")
+# --- NOVA FUNÇÃO INTELIGENTE: SALVAR NOTAS EM ABA ESPECÍFICA ---
+def salvar_relatorio_notas(df_final, nome_do_evento):
+    # Define o nome da aba baseado no evento atual (ex: "Notas_Seminario_1")
+    nome_aba_destino = f"Notas_{nome_do_evento}"
     
-    # Limpa o conteúdo antigo (mantendo o cabeçalho se quiser, mas aqui vamos reescrever tudo)
-    ws_notas.clear()
+    try:
+        # Tenta abrir a aba. Se ela existir, limpamos o conteúdo para atualizar
+        ws_notas = planilha.worksheet(nome_aba_destino)
+        ws_notas.clear()
+        mensagem = f"Aba '{nome_aba_destino}' atualizada com sucesso!"
+    except:
+        # Se der erro (não existe), criamos uma aba nova
+        ws_notas = planilha.add_worksheet(title=nome_aba_destino, rows=100, cols=10)
+        mensagem = f"Aba '{nome_aba_destino}' criada e salva com sucesso!"
     
-    # Prepara os dados para envio (Lista de Listas)
-    # Adiciona o cabeçalho manualmente para garantir
+    # Prepara os dados para envio (Cabeçalho + Dados)
     dados_para_enviar = [df_final.columns.values.tolist()] + df_final.values.tolist()
     
     # Escreve na planilha
     ws_notas.update(range_name="A1", values=dados_para_enviar)
-    st.toast("Notas salvas na aba NOTAS com sucesso!", icon="💾")
+    st.toast(mensagem, icon="💾")
+    return nome_aba_destino
 
 # --- APP ---
 try:
     df_config, df_alunos, df_grupos, df_criterios, df_respostas = carregar_dados()
 
-    if df_config.empty: st.stop()
-    evento_atual = df_config.iloc[0]['ID_Avaliacao_Atual']
-    status_sistema = df_config.iloc[0]['Status_Sistema']
-    senha_professor = str(df_config.iloc[0]['Senha_Professor'])
+    # === LÓGICA INTELIGENTE DE SELEÇÃO DE EVENTO ===
+    evento_ativo = df_config[df_config['Status_Sistema'].str.upper() == 'ABERTO']
 
+    if evento_ativo.empty:
+        # Se fechado, pega o primeiro da lista apenas para referência
+        config_atual = df_config.iloc[0]
+        status_sistema = "FECHADO"
+        evento_atual = config_atual['ID_Avaliacao_Atual']
+        senha_professor = str(config_atual['Senha_Professor'])
+        if 'modo' not in st.session_state: st.session_state['modo'] = "Área do Professor"
+    else:
+        config_atual = evento_ativo.iloc[0]
+        evento_atual = config_atual['ID_Avaliacao_Atual']
+        status_sistema = "ABERTO"
+        senha_professor = str(config_atual['Senha_Professor'])
+
+    # Navegação Lateral
     st.sidebar.title("Navegação")
     modo = st.sidebar.radio("Acesso:", ["Área do Aluno", "Área do Professor"])
 
@@ -94,7 +115,7 @@ try:
         st.title(f"🚀 Avaliação: {evento_atual}")
         
         if status_sistema != "ABERTO":
-            st.warning("Avaliações Fechadas.")
+            st.warning(f"O evento '{evento_atual}' está encerrado.")
             st.stop()
 
         if 'aluno_logado' not in st.session_state:
@@ -200,7 +221,7 @@ try:
     elif modo == "Área do Professor":
         senha = st.sidebar.text_input("Senha", type="password")
         if senha == senha_professor:
-            st.title("📊 Painel do Professor")
+            st.title(f"📊 Painel do Professor ({evento_atual})")
             
             if st.button("🔄 Atualizar Dados"):
                 carregar_dados.clear()
@@ -209,19 +230,15 @@ try:
             if df_respostas.empty:
                 st.info("Sem dados.")
             else:
-                # 1. Calcula as médias por Grupo (Considerando apenas PARES)
                 df_foco = df_respostas[
                     (df_respostas['ID_Avaliacao'] == evento_atual) & 
                     (df_respostas['Tipo'] == 'Par')
                 ].copy()
 
                 if not df_foco.empty:
-                    # Agrupa por ID do Grupo para garantir precisão
                     ranking = df_foco.groupby('ID_Grupo_Avaliado')['Nota_Total_Calculada'].mean().reset_index()
                     ranking.columns = ['ID_Grupo', 'Nota_Media_Grupo']
                     
-                    # 2. Cruza com os Alunos para gerar a lista final
-                    # Merge: Tabela Alunos + Tabela de Notas dos Grupos
                     df_consolidado = pd.merge(
                         df_alunos, 
                         ranking, 
@@ -230,24 +247,21 @@ try:
                         how='left'
                     )
                     
-                    # Limpeza e formatação
                     df_consolidado['Nota_FINAL'] = df_consolidado['Nota_Media_Grupo'].fillna(0).round(2)
-                    
-                    # Seleciona apenas as colunas pedidas
                     df_exportacao = df_consolidado[['Matricula', 'Nome_Aluno', 'ID_Grupo_Pertencente', 'Nota_FINAL']]
 
-                    st.subheader("📋 Prévia das Notas Finais (Alunos)")
+                    st.subheader("📋 Prévia das Notas Finais")
                     st.dataframe(df_exportacao.style.background_gradient(subset=['Nota_FINAL'], cmap='RdYlGn'))
 
-                    # --- BOTÃO MÁGICO PARA SALVAR ---
+                    # --- BOTÃO MÁGICO PARA SALVAR NA ABA ESPECÍFICA ---
                     st.markdown("---")
-                    st.subheader("💾 Fechamento")
-                    st.write("Clique abaixo para escrever essas notas na aba 'NOTAS' da planilha.")
+                    st.subheader("💾 Consolidar e Arquivar")
+                    st.write(f"Ao clicar abaixo, o sistema criará (ou atualizará) a aba **'Notas_{evento_atual}'** no Google Sheets.")
                     
-                    if st.button("Salvar Notas Finais na Planilha"):
-                        with st.spinner("Escrevendo na aba NOTAS..."):
-                            salvar_relatorio_notas(df_exportacao)
-                        st.success("Sucesso! Verifique a aba 'NOTAS' no Google Sheets.")
+                    if st.button(f"Salvar Notas de '{evento_atual}'"):
+                        with st.spinner(f"Gerando aba Notas_{evento_atual}..."):
+                            nome_aba_criada = salvar_relatorio_notas(df_exportacao, evento_atual)
+                        st.success(f"Sucesso! Os dados estão salvos na aba: {nome_aba_criada}")
                 
                 else:
                     st.warning("Não há votos de pares suficientes para calcular médias.")
