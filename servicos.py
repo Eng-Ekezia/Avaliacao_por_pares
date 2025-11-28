@@ -49,70 +49,63 @@ def carregar_dados():
 
 def gerar_estatisticas_avancadas(df_respostas, df_alunos, evento_atual):
     """
-    Processa os dados brutos e retorna um DataFrame enriquecido com:
-    - Média Saneada (sem outliers)
-    - Desvio Padrão (Consenso)
-    - Delta de Autoavaliação
-    - Detalhamento por Critério (para Radar)
+    Processa estatísticas com tratamento rigoroso de tipos (String/Int) para evitar erros no Radar.
     """
     if df_respostas.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    # Filtra apenas o evento atual
+    # Filtra evento e copia
     df = df_respostas[df_respostas['ID_Avaliacao'] == evento_atual].copy()
     
-    # Garante tipos corretos
-    df['ID_Grupo_Avaliado'] = df['ID_Grupo_Avaliado'].astype(str)
-    df['Nota_Total_Calculada'] = pd.to_numeric(df['Nota_Total_Calculada'])
+    # === FORÇA TIPAGEM STRING NOS IDs PARA EVITAR ERROS DE MERGE ===
+    df['ID_Grupo_Avaliado'] = df['ID_Grupo_Avaliado'].astype(str).str.strip()
+    df_alunos['ID_Grupo_Pertencente'] = df_alunos['ID_Grupo_Pertencente'].astype(str).str.strip()
+    
+    # Garante numérico para nota
+    df['Nota_Total_Calculada'] = pd.to_numeric(df['Nota_Total_Calculada'], errors='coerce').fillna(0)
 
-    # --- 1. SEPARAÇÃO PAR vs AUTO ---
+    # Separação
     pares = df[df['Tipo'] == 'Par']
     auto = df[df['Tipo'] != 'Par']
 
-    # --- 2. CÁLCULO ESTATÍSTICO DOS PARES ---
-    # Agrupa por grupo avaliado e aplica métricas
+    # --- ESTATÍSTICAS ---
     stats = pares.groupby('ID_Grupo_Avaliado')['Nota_Total_Calculada'].agg(
         Media_Bruta='mean',
         Desvio_Padrao='std',
         Contagem='count',
         Media_Saneada=_remover_outliers
     ).reset_index()
-
-    # Trata valores nulos (grupos com 1 voto têm std NaN)
     stats['Desvio_Padrao'] = stats['Desvio_Padrao'].fillna(0)
     
-    # --- 3. PROCESSAMENTO DA AUTOAVALIAÇÃO ---
-    # Pega a nota que o grupo se deu (se houver múltipla, tira média)
+    # --- AUTOAVALIAÇÃO ---
     auto_notas = auto.groupby('ID_Grupo_Avaliado')['Nota_Total_Calculada'].mean().reset_index()
     auto_notas.rename(columns={'Nota_Total_Calculada': 'Nota_Autoavaliacao'}, inplace=True)
 
-    # --- 4. CONSOLIDAÇÃO FINAL ---
+    # --- CONSOLIDAÇÃO ---
     df_final = pd.merge(stats, auto_notas, on='ID_Grupo_Avaliado', how='left')
-    
-    # Calcula o DELTA (Diferença entre o que acham e o que o grupo acha)
-    # Delta Positivo = Grupo se superestimou | Delta Negativo = Grupo se subestimou
     df_final['Delta_Auto'] = df_final['Nota_Autoavaliacao'] - df_final['Media_Saneada']
     df_final['Delta_Auto'] = df_final['Delta_Auto'].fillna(0)
 
-    # Traz nomes dos alunos e grupos para exibição
+    # Merge com Nomes (Garante que chave da direita também é string)
     df_final = pd.merge(df_final, df_alunos[['ID_Grupo_Pertencente', 'Nome_Aluno', 'Matricula']], 
                         left_on='ID_Grupo_Avaliado', right_on='ID_Grupo_Pertencente', how='left')
 
-    # --- 5. DETALHAMENTO POR CRITÉRIO (Para Gráfico de Radar) ---
-    # Expande o JSON de detalhes das notas
+    # --- RADAR (CRITÉRIOS) ---
     lista_detalhes = []
     for _, row in pares.iterrows():
         try:
+            # Tenta ler o JSON
             notas_dict = json.loads(row['Detalhes_Notas'])
-            notas_dict['ID_Grupo_Avaliado'] = row['ID_Grupo_Avaliado']
+            # Garante que o ID anexado ao dict é string limpa
+            notas_dict['ID_Grupo_Avaliado'] = str(row['ID_Grupo_Avaliado']).strip()
             lista_detalhes.append(notas_dict)
         except:
             continue
             
-    df_detalhado = pd.DataFrame(lista_detalhes)
-    # Calcula média de cada critério por grupo
-    if not df_detalhado.empty:
-        df_radar = df_detalhado.groupby('ID_Grupo_Avaliado').mean().reset_index()
+    if lista_detalhes:
+        df_detalhado = pd.DataFrame(lista_detalhes)
+        # Groupby usando a coluna de ID garantida como string
+        df_radar = df_detalhado.groupby('ID_Grupo_Avaliado').mean(numeric_only=True).reset_index()
     else:
         df_radar = pd.DataFrame()
 

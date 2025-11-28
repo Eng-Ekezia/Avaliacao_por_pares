@@ -12,17 +12,26 @@ st.set_page_config(page_title="Avaliação 360°", layout="wide", page_icon="�
 # --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
+    /* Botões grandes */
     .stButton button {
         width: 100%;
         height: 60px;
         border-radius: 8px;
         font-weight: 600;
     }
+    /* CORREÇÃO DO DARK MODE NOS CARDS DE KPI */
     div[data-testid="stMetric"] {
-        background-color: #f8f9fa;
+        background-color: #f0f2f6; /* Fundo cinza claro */
         padding: 15px;
         border-radius: 10px;
-        border: 1px solid #e9ecef;
+        border: 1px solid #d6d6d6;
+    }
+    /* Força texto escuro nos valores e labels dentro do card */
+    div[data-testid="stMetric"] label {
+        color: #31333F !important; /* Cinza escuro */
+    }
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+        color: #000000 !important; /* Preto absoluto */
     }
 </style>
 """, unsafe_allow_html=True)
