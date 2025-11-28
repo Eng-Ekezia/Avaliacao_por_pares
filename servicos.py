@@ -95,7 +95,7 @@ def gerar_estatisticas_avancadas(df_respostas, df_alunos, evento_atual):
     for _, row in pares.iterrows():
         try:
             # Tenta ler o JSON
-            notas_dict = json.loads(row['Detalhes_Notas'])
+            notas_dict = json.loads(row['Detalhes_JSON'])
             # Garante que o ID anexado ao dict é string limpa
             notas_dict['ID_Grupo_Avaliado'] = str(row['ID_Grupo_Avaliado']).strip()
             lista_detalhes.append(notas_dict)
